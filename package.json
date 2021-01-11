@@ -7,6 +7,7 @@
     "node": ">= 6"
   },
   "dependencies": {
+    "babel-plugin-transform-commonjs": "^1.1.6",
     "inherits": "^2.0.3",
     "string_decoder": "^1.1.1",
     "util-deprecate": "^1.0.1"
@@ -22,6 +23,7 @@
     "assert": "^1.4.0",
     "bl": "^2.0.0",
     "deep-strict-equal": "^0.2.0",
+    "esbuild": "^0.8.8",
     "events.once": "^2.0.2",
     "glob": "^7.1.2",
     "gunzip-maybe": "^1.4.1",
@@ -36,6 +38,7 @@
     "util-promisify": "^2.1.0"
   },
   "scripts": {
+    "build": "build/build.js $VERSION && node build/build-deno.js",
     "test": "tap -J --no-esm test/parallel/*.js test/ours/*.js",
     "ci": "TAP=1 tap --no-esm test/parallel/*.js test/ours/*.js | tee test.tap",
     "test-browsers": "airtap test/browser.js",
@@ -59,7 +62,7 @@
     "./errors": "./errors-browser.js",
     "./readable.js": "./readable-browser.js",
     "./lib/internal/streams/from.js": "./lib/internal/streams/from-browser.js",
-    "./lib/internal/streams/stream.js": "./lib/internal/streams/stream-browser.js"
+    "./lib/internal/streams/legacy.js": "./lib/internal/streams/stream-browser.js"
   },
   "nyc": {
     "include": [

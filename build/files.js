@@ -24,6 +24,16 @@ const headRegexp = /(^module.exports = \w+;?)/m
           /(require\(['"])(string_decoder)(['"]\))/g
         , '$1$2/$3'
       ]
+    , lazyStringDecoderReplacement = [
+      /if \(\!StringDecoder\)\s*StringDecoder = require\(['"]string_decoder['"]\)\.StringDecoder;/g
+      , `
+      if (typeof DenoStringDecoder === "undefined") {
+        StringDecoder = require('string_decoder/').StringDecoder
+      }else{
+        StringDecoder = DenoStringDecoder;
+      }
+      `
+    ]
 
       // The browser build ends up with a circular dependency, so the require is
       // done lazily, but cached.
@@ -51,13 +61,21 @@ const headRegexp = /(^module.exports = \w+;?)/m
 
     , debugLogReplacement = [
           /const debug = util.debuglog\('stream'\);/
-      ,   '\n\n/*<replacement>*/\nconst debugUtil = require(\'util\');\n'
-        + 'let debug;\n'
-        + 'if (debugUtil && debugUtil.debuglog) {\n'
-        + '  debug = debugUtil.debuglog(\'stream\');\n'
-        + '} else {\n'
-        + '  debug = function () {};\n'
-        + '}\n/*</replacement>*/\n'
+      , `
+      /*<replacement>*/
+      let CrossplatformUtil;
+      if(typeof DenoUtil === "undefined"){
+        CrossplatformUtil = require('util');
+      }else{
+        CrossplatformUtil = DenoUtil;
+      }
+      /*</replacement>*/
+      let debug;
+      if (CrossplatformUtil && CrossplatformUtil.debuglog) {
+        debug = CrossplatformUtil.debuglog('stream');
+      } else {
+        debug = function () {};
+      }`
       ]
 
     , deprecateReplacement = [
@@ -80,6 +98,27 @@ const headRegexp = /(^module.exports = \w+;?)/m
 
     , objectKeysReplacement = require('./common-replacements').objectKeysReplacement
 
+    , crossplatformEventEmitterRequire = [
+      /const EE = require\(['"]events['"]\);/g,
+      `
+      let CrossplatformEventEmitter;
+      if(typeof DenoEventEmitter === "undefined"){
+        CrossplatformEventEmitter = require('events');
+      }else{
+        CrossplatformEventEmitter = DenoEventEmitter;
+      }
+      `
+    ]
+    , crossplatformEventEmitter = [
+      /EE/g,
+      `CrossplatformEventEmitter`
+    ]
+    //This one is tricky, you need to watch out what the name of the options passed
+    //to the stream function is (opts) in this case
+    , extendCrossplatformEventEmitter = [
+      /CrossplatformEventEmitter\.call\(this\);/g,
+      `Object.assign(this, new CrossplatformEventEmitter());`
+    ]
     , eventEmittterReplacement = [
         /^(const EE = require\('events'\));$/m
       ,   '/*<replacement>*/\n$1.EventEmitter;\n\n'
@@ -99,23 +138,44 @@ const headRegexp = /(^module.exports = \w+;?)/m
       + '\'ucs2\', \'ucs-2\',\'utf16le\', \'utf-16le\', \'raw\']\n'
       + '.indexOf(($1 + \'\').toLowerCase()) > -1)'
     ]
-
+    , bufferReplacement = [
+      /Buffer\./g,
+      'CrossplatformBuffer.'
+    ]
     , requireStreamReplacement = [
       /const Stream = require\('stream'\);/
     ,  '\n\n/*<replacement>*/\n'
-      + 'var Stream = require(\'./internal/streams/stream\')'
+      + 'var Stream = require(\'./internal/streams/legacy\')'
       + '\n/*</replacement>*/\n'
     ]
-
     , isBufferReplacement = [
       /(\w+) instanceof Buffer/g
-    , 'Buffer.isBuffer($1)'
+    , 'CrossplatformBuffer.isBuffer($1)'
     ]
-
+    , requireBufferReplacement = [
+      /(?:var|const) (?:{ )Buffer(?: }) = require\('buffer'\)(?:\.Buffer)?;/g
+    ,  `
+    let CrossplatformBuffer;
+    if(typeof Buffer === "undefined"){
+      CrossplatformBuffer = require('buffer').Buffer;
+    }else{
+      CrossplatformBuffer = Buffer;
+    }`
+    ]
     , internalUtilReplacement = [
           /^const internalUtil = require\('internal\/util'\);/m
-        ,   '\n/*<replacement>*/\nconst internalUtil = {\n  deprecate: require(\'util-deprecate\')\n};\n'
-          + '/*</replacement>*/\n'
+        ,
+        `
+        /*<replacement>*/
+        let deprecate;
+        if(typeof DenoUtil === "undefined"){
+          deprecate = require('util-deprecate');
+        }else{
+          deprecate = DenoUtil.deprecate;
+        }
+        const internalUtil = { deprecate };
+        /*</replacement>*/
+        `
       ]
   , internalDirectory = [
     /require\('internal\/streams\/([a-zA-z]+)'\)/g,
@@ -132,13 +192,18 @@ const headRegexp = /(^module.exports = \w+;?)/m
   , addUintStuff = [
     /(?:var|const) (?:{ )Buffer(?: }) = require\('buffer'\)(?:\.Buffer)?;/g
     , `
-  const Buffer = require('buffer').Buffer
+  let CrossplatformBuffer;
+  if(typeof Buffer === "undefined"){
+    CrossplatformBuffer = require('buffer').Buffer;
+  }else{
+    CrossplatformBuffer = Buffer;
+  }
   const OurUint8Array = global.Uint8Array || function () {}
 function _uint8ArrayToBuffer(chunk) {
-   return Buffer.from(chunk);
+   return CrossplatformBuffer.from(chunk);
 }
 function _isUint8Array(obj) {
-  return Buffer.isBuffer(obj) || obj instanceof OurUint8Array;
+  return CrossplatformBuffer.isBuffer(obj) || obj instanceof OurUint8Array;
 }
   `
   ]
@@ -178,7 +243,7 @@ function CorkedRequest(state) {
   ]
   , fixBufferCheck = [
       /Object\.getPrototypeOf\((chunk)\) !== Buffer\.prototype/g
-    , '!Buffer.isBuffer($1)'
+    , '!CrossplatformBuffer.isBuffer($1)'
   ]
   , errorsOneLevel = [
         /internal\/errors/
@@ -244,17 +309,19 @@ module.exports['_stream_passthrough.js'] = [
 module.exports['_stream_readable.js'] = [
     addDuplexRequire
   , addDuplexDec
+  , crossplatformEventEmitterRequire
+  , crossplatformEventEmitter
   , requireReplacement
   , instanceofReplacement
   , altIndexOfImplReplacement
   , altIndexOfUseReplacement
-  , stringDecoderReplacement
+  , lazyStringDecoderReplacement
   , debugLogReplacement
   , utilReplacement
   , inherits
-  , stringDecoderReplacement
   , eventEmittterReplacement
   , requireStreamReplacement
+  , bufferReplacement
   , isBufferReplacement
   , eventEmittterListenerCountReplacement
   , internalDirectory
@@ -291,6 +358,7 @@ module.exports['_stream_writable.js'] = [
   , objectDefinePropertyReplacement
   , objectDefinePropertySingReplacement
   , bufferIsEncodingReplacement
+  , bufferReplacement
   , [ /^var assert = require\('assert'\);$/m, '' ]
   , requireStreamReplacement
   , isBufferReplacement
@@ -315,10 +383,20 @@ module.exports['internal/streams/buffer_list.js'] = [
     [
       /const \{ inspect \} = require\('util'\);/,
       `
-const { inspect } = require('util')
-const custom = inspect && inspect.custom || 'inspect'
+      /*<replacement>*/
+      let CrossplatformUtil;
+      if(typeof DenoUtil === "undefined"){
+        CrossplatformUtil = require('util');
+      }else{
+        CrossplatformUtil = DenoUtil;
+      }
+      /*</replacement>*/
+      const { inspect } = CrossplatformUtil;
+      const custom = inspect && inspect.custom || 'inspect'
       `
     ]
+    , requireBufferReplacement
+    , bufferReplacement
 ]
 module.exports['internal/streams/destroy.js'] = [
     errorsTwoLevel
@@ -379,3 +457,11 @@ module.exports['internal/streams/from.js'] = [
 else if (iterable && iterable[Symbol.asyncIterator])`
     ]
 ]
+
+module.exports['internal/streams/legacy.js'] = [
+  , utilReplacement
+  , inherits
+  , crossplatformEventEmitterRequire
+  , crossplatformEventEmitter
+  , extendCrossplatformEventEmitter
+];
